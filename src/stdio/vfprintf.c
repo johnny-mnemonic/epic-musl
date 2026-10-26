@@ -206,7 +206,9 @@ static int fmt_fp(FILE *f, long double y, int w, int p, int fl, int t, int ps)
 
 	if (!isfinite(y)) {
 		char *s = (t&32)?"inf":"INF";
-		if (y!=y) s=(t&32)?"nan":"NAN";
+		/* Use isnan() rather than y!=y to correctly handle
+		 * all NaN types (including pseudo-denormals on ia64) */
+		if (isnan(y)) s=(t&32)?"nan":"NAN";
 		pad(f, ' ', w, 3+pl, fl&~ZERO_PAD);
 		out(f, prefix, pl);
 		out(f, s, 3);

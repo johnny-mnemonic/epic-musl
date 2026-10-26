@@ -138,7 +138,11 @@ enum {
 	((sigset_t *)(const unsigned long [_NSIG/8/sizeof(long)]){ \
 	 0x80000000 })
 
+#ifdef __ia64__
+void *__tls_get_addr(size_t, size_t);
+#else
 void *__tls_get_addr(tls_mod_off_t *);
+#endif
 hidden int __init_tp(void *);
 hidden void *__copy_tls(unsigned char *);
 hidden void __reset_tls();

@@ -43,7 +43,7 @@ static void _sigaddset(sigset_t *set, int sig)
 	set->__bits[s/8/sizeof *set->__bits] |= 1UL<<(s&8*sizeof *set->__bits-1);
 }
 
-extern hidden const char __cp_begin[1], __cp_end[1], __cp_cancel[1];
+extern hidden const uintptr_t __cp_begin_addr, __cp_end_addr, __cp_cancel_addr;
 
 static void cancel_handler(int sig, siginfo_t *si, void *ctx)
 {
@@ -61,8 +61,8 @@ static void cancel_handler(int sig, siginfo_t *si, void *ctx)
 		__cancel();
 	}
 
-	if (pc >= (uintptr_t)__cp_begin && pc < (uintptr_t)__cp_end) {
-		uc->uc_mcontext.MC_PC = (uintptr_t)__cp_cancel;
+	if (pc >= __cp_begin_addr && pc < __cp_end_addr) {
+	    uc->uc_mcontext.MC_PC = __cp_cancel_addr;
 #ifdef CANCEL_GOT
 		uc->uc_mcontext.MC_GOT = CANCEL_GOT;
 #endif

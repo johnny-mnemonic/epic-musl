@@ -352,7 +352,13 @@ int __pthread_create(pthread_t *restrict res, const pthread_attr_t *restrict att
 
 	__tl_lock();
 	if (!libc.threads_minus_1++) libc.need_locks = 1;
+#ifdef __ia64__
+	ret = __clone((c11 ? start_c11 : start), stack, flags, args,
+		&new->tid, TP_ADJ(new), &__thread_list_lock,
+		stack - stack_limit);
+#else
 	ret = __clone((c11 ? start_c11 : start), stack, flags, args, &new->tid, TP_ADJ(new), &__thread_list_lock);
+#endif
 
 	/* All clone failures translate to EAGAIN. If explicit scheduling
 	 * was requested, attempt it before unlocking the thread list so

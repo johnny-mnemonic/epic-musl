@@ -216,7 +216,18 @@ static void (*fdbarrier(void *p))()
 #else
 #define laddr(p, v) (void *)((p)->base + (v))
 #define laddr_pg(p, v) laddr(p, v)
+#ifdef __ia64__
+static void (*fpbarrier(void *p))()
+{
+	void (*fd)();
+	__asm__("" : "=r"(fd) : "0"(p));
+	return fd;
+}
+#define fpaddr(p, v) fpbarrier(&(struct funcdesc){ \
+	laddr(p, v), (p)->got })
+#else
 #define fpaddr(p, v) ((void (*)())laddr(p, v))
+#endif
 #endif
 
 static void decode_vec(size_t *v, size_t *a, size_t cnt)
@@ -408,6 +419,23 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 		if (skip_relative && IS_RELATIVE(rel[1], dso->syms)) continue;
 		type = R_TYPE(rel[1]);
 		if (type == REL_NONE) continue;
+#ifdef __ia64__
+		/* IA-64 function-pointer initializers can arrive as
+		 * R_IA64_FPTR64LSB against local STT_FUNC symbols, e.g.
+		 * error_noop/set_errno_noop. More generally, non-TLS
+		 * relocations against local ldso symbols are resolved in
+		 * stage 2 and cannot be interposed by the full stage-3
+		 * symbol scope. Skip them on ldso's second pass so runtime
+		 * stores to initialized data are not rolled back.
+		 *
+		 * Do not skip TLS relocations here: their module/offset
+		 * values may depend on the final TLS layout. */
+		if (skip_relative && head != &ldso && R_SYM(rel[1])
+		    && (dso->syms[R_SYM(rel[1])].st_info>>4) == STB_LOCAL
+		    && type != REL_DTPMOD && type != REL_DTPOFF
+		    && type != REL_TPOFF)
+			continue;
+#endif
 		reloc_addr = laddr(dso, rel[0]);
 
 		if (stride > 2) {
@@ -470,8 +498,15 @@ static void do_relocs(struct dso *dso, size_t *rel, size_t rel_size, size_t stri
 			addend -= (size_t)reloc_addr;
 		case REL_SYMBOLIC:
 		case REL_GOT:
-		case REL_PLT:
 			*reloc_addr = sym_val + addend;
+			break;
+		case REL_PLT:
+#ifdef __ia64__
+			reloc_addr[0] = sym_val + addend;              /* target code address  */
+			reloc_addr[1] = def.sym ? (size_t)def.dso->got : 0;  /* target DSO's GP */
+#else
+			*reloc_addr = sym_val + addend;
+#endif
 			break;
 		case REL_USYMBOLIC:
 			memcpy(reloc_addr, &(size_t){sym_val + addend}, sizeof(size_t));
@@ -1253,7 +1288,7 @@ static struct dso *load_library(const char *name, struct dso *needed_by)
 	p->prev = tail;
 	tail = p;
 
-	if (DL_FDPIC) makefuncdescs(p);
+	if (DL_FDPIC || NEED_FDESC) makefuncdescs(p);
 
 	if (ldd_mode) dprintf(1, "\t%s => %s (%p)\n", name, pathname, p->base);
 
@@ -1739,7 +1774,7 @@ hidden void __dls2(unsigned char *base, size_t *sp)
 	kernel_mapped_dso(&ldso);
 	decode_dyn(&ldso);
 
-	if (DL_FDPIC) makefuncdescs(&ldso);
+	if (DL_FDPIC || NEED_FDESC) makefuncdescs(&ldso);
 
 	/* Prepare storage for to save clobbered REL addends so they
 	 * can be reused in stage 3. There should be very few. If
@@ -1766,7 +1801,7 @@ hidden void __dls2(unsigned char *base, size_t *sp)
 	 * symbolically as a barrier against moving the address
 	 * load across the above relocation processing. */
 	struct symdef dls2b_def = find_sym(&ldso, "__dls2b", 0);
-	if (DL_FDPIC) ((stage3_func)&ldso.funcdescs[dls2b_def.sym-ldso.syms])(sp, auxv);
+	if (DL_FDPIC || NEED_FDESC) ((stage3_func)&ldso.funcdescs[dls2b_def.sym-ldso.syms])(sp, auxv);
 	else ((stage3_func)laddr(&ldso, dls2b_def.sym->st_value))(sp, auxv);
 }
 
@@ -1790,7 +1825,7 @@ void __dls2b(size_t *sp, size_t *auxv)
 	}
 
 	struct symdef dls3_def = find_sym(&ldso, "__dls3", 0);
-	if (DL_FDPIC) ((stage3_func)&ldso.funcdescs[dls3_def.sym-ldso.syms])(sp, auxv);
+	if (DL_FDPIC || NEED_FDESC) ((stage3_func)&ldso.funcdescs[dls3_def.sym-ldso.syms])(sp, auxv);
 	else ((stage3_func)laddr(&ldso, dls3_def.sym->st_value))(sp, auxv);
 }
 
@@ -1942,8 +1977,8 @@ void __dls3(size_t *sp, size_t *auxv)
 		tls_align = MAXP2(tls_align, app.tls.align);
 	}
 	decode_dyn(&app);
+	if (DL_FDPIC || NEED_FDESC) makefuncdescs(&app);
 	if (DL_FDPIC) {
-		makefuncdescs(&app);
 		if (!app.loadmap) {
 			app.loadmap = (void *)&app_dummy_loadmap;
 			app.loadmap->nsegs = 1;
@@ -2289,8 +2324,12 @@ static void *do_dlsym(struct dso *p, const char *s, void *ra)
 		return 0;
 	}
 	if ((def.sym->st_info&0xf) == STT_TLS)
+#ifdef __ia64__
+		return __tls_get_addr(def.dso->tls_id, def.sym->st_value-DTP_OFFSET);
+#else
 		return __tls_get_addr((tls_mod_off_t []){def.dso->tls_id, def.sym->st_value-DTP_OFFSET});
-	if (DL_FDPIC && (def.sym->st_info&0xf) == STT_FUNC)
+#endif
+	if ((DL_FDPIC || NEED_FDESC) && (def.sym->st_info&0xf) == STT_FUNC)
 		return def.dso->funcdescs + (def.sym - def.dso->syms);
 	return laddr(def.dso, def.sym->st_value);
 }
@@ -2412,8 +2451,11 @@ int dl_iterate_phdr(int(*callback)(struct dl_phdr_info *info, size_t size, void 
 		info.dlpi_subs      = 0;
 		info.dlpi_tls_modid = current->tls_id;
 		info.dlpi_tls_data = !current->tls_id ? 0 :
+#ifdef __ia64__
+			__tls_get_addr(current->tls_id,0);
+#else
 			__tls_get_addr((tls_mod_off_t[]){current->tls_id,0});
-
+#endif
 		ret = (callback)(&info, sizeof (info), data);
 
 		if (ret != 0) break;

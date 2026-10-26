@@ -1,0 +1,18 @@
+#define _Addr long
+#define _Int64 long
+#define _Reg long
+#define __BYTE_ORDER 1234 /* IA64 Linux is strictly Little Endian */
+#define __LONG_MAX 0x7fffffffffffffffL
+
+#ifndef __cplusplus
+TYPEDEF int wchar_t;
+#endif
+TYPEDEF unsigned wint_t;
+
+TYPEDEF int blksize_t;
+TYPEDEF unsigned long nlink_t;
+
+TYPEDEF float float_t;
+TYPEDEF double double_t;
+
+TYPEDEF struct { long long __ll; long double __ld; } max_align_t;

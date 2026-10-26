@@ -157,7 +157,12 @@ hidden void _dlstart_c(size_t *sp, size_t *dynv)
 	}
 #endif
 
+#ifdef __ia64__
+	hidden void __dls2(unsigned char *, size_t *);
+	__dls2((void *)base, sp);
+#else
 	stage2_func dls2;
 	GETFUNCSYM(&dls2, __dls2, base+dyn[DT_PLTGOT]);
 	dls2((void *)base, sp);
+#endif
 }
